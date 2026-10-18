@@ -38,6 +38,7 @@ type Booking = {
   end_at: string;
   status: BookingStatus;
   price_at_booking: number | null;
+  completed_at: string | null;
 };
 
 type Service = {
@@ -64,79 +65,72 @@ export default function AdminPage() {
   const [actionError, setActionError] = useState("");
   const [updatingBookingId, setUpdatingBookingId] =
     useState<string | null>(null);
-
   const [searchTerm, setSearchTerm] = useState("");
-  const [statusFilter, setStatusFilter] =
-    useState<"all" | BookingStatus>("all");
+  const [statusFilter, setStatusFilter] = useState<"all" | BookingStatus>("all");
   const [dateFilter, setDateFilter] = useState("");
-  const [reportPeriod, setReportPeriod] =
-    useState<"today" | "week" | "month">("month");
+  const [reportPeriod, setReportPeriod] = useState<"today" | "week" | "month">("month");
 
   async function loadDashboard() {
     setLoading(true);
     setError("");
 
-    try {
-      const { data: authData, error: authError } =
-        await supabase.auth.getUser();
+    const { data: authData, error: authError } =
+      await supabase.auth.getUser();
 
-      if (authError || !authData.user) {
-        router.replace("/login");
-        return;
-      }
-
-      setEmail(authData.user.email ?? "");
-
-      const [
-        { data: bookingData, error: bookingError },
-        { data: serviceData, error: serviceError },
-        { data: barberData, error: barberError },
-      ] = await Promise.all([
-        supabase
-          .from("bookings")
-          .select(
-            "id, customer_name, customer_phone, service_id, barber_id, start_at, end_at, status, price_at_booking"
-          )
-          .order("start_at", { ascending: true }),
-
-        supabase
-          .from("services")
-          .select("id, name, price"),
-
-        supabase
-          .from("barbers")
-          .select("id, name"),
-      ]);
-
-      if (bookingError) {
-        setError(
-          "โหลดรายการจองไม่สำเร็จ กรุณาตรวจสอบสิทธิ์ Admin และ RLS ใน Supabase"
-        );
-      } else {
-        setBookings((bookingData ?? []) as Booking[]);
-      }
-
-      if (serviceError || barberError) {
-        setError((current) =>
-          current ||
-          "โหลดข้อมูลบริการหรือช่างไม่สำเร็จ กรุณาลองรีเฟรช"
-        );
-      }
-
-      setServices((serviceData ?? []) as Service[]);
-      setBarbers((barberData ?? []) as Barber[]);
-    } catch (err) {
-      console.error("Load dashboard error:", err);
-      setError("เกิดข้อผิดพลาดขณะโหลดข้อมูล กรุณาลองอีกครั้ง");
-    } finally {
-      setLoading(false);
+    if (authError || !authData.user) {
+      router.replace("/login");
+      return;
     }
+
+    setEmail(authData.user.email ?? "");
+
+    const [
+      { data: bookingData, error: bookingError },
+      { data: serviceData, error: serviceError },
+      { data: barberData, error: barberError },
+    ] = await Promise.all([
+      supabase
+        .from("bookings")
+        .select(
+          "id, customer_name, customer_phone, service_id, barber_id, start_at, end_at, status, price_at_booking, completed_at"
+        )
+        .order("start_at", { ascending: true }),
+      supabase.from("services").select("id, name, price"),
+      supabase.from("barbers").select("id, name"),
+    ]);
+
+    if (bookingError) {
+      setError(
+        "ไม่สามารถโหลดรายการจองได้ กรุณาตรวจสอบสิทธิ์ RLS ใน Supabase"
+      );
+    } else {
+      setBookings((bookingData ?? []) as Booking[]);
+    }
+
+    if (serviceError || barberError) {
+      setError((current) =>
+        current ||
+        "โหลดข้อมูลบริการหรือช่างไม่สำเร็จ กรุณาลองรีเฟรช"
+      );
+    }
+
+    setServices((serviceData ?? []) as Service[]);
+    setBarbers((barberData ?? []) as Barber[]);
+    setLoading(false);
   }
 
   useEffect(() => {
-    void loadDashboard();
-    // โหลดข้อมูลเมื่อเปิดหน้า Admin
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    let active = true;
+
+    async function initialize() {
+      await loadDashboard();
+    }
+
+    initialize();
+
+    return () => {
+      active = false;
+    };
   }, []);
 
   async function handleLogout() {
@@ -174,15 +168,15 @@ export default function AdminPage() {
         }
       );
 
-      if (rpcError) throw rpcError;
+      if (rpcError) {
+        throw rpcError;
+      }
 
       if (data !== true) {
         throw new Error("ไม่สามารถยืนยันการเปลี่ยนสถานะได้");
       }
 
-      setActionMessage(
-        `อัปเดตสถานะเป็น "${labels[newStatus]}" สำเร็จ`
-      );
+      setActionMessage(`อัปเดตสถานะเป็น "${labels[newStatus]}" สำเร็จ`);
 
       await loadDashboard();
     } catch (err) {
@@ -229,24 +223,18 @@ export default function AdminPage() {
 
   const filteredBookings = bookings.filter((booking) => {
     const search = searchTerm.trim().toLowerCase();
-
     const matchesSearch =
       !search ||
       booking.customer_name.toLowerCase().includes(search) ||
       booking.customer_phone.toLowerCase().includes(search);
 
     const matchesStatus =
-      statusFilter === "all" ||
-      booking.status === statusFilter;
+      statusFilter === "all" || booking.status === statusFilter;
 
-    const bookingDate = new Date(
-      booking.start_at
-    ).toLocaleDateString("en-CA", {
+    const bookingDate = new Date(booking.start_at).toLocaleDateString("en-CA", {
       timeZone: "Asia/Bangkok",
     });
-
-    const matchesDate =
-      !dateFilter || bookingDate === dateFilter;
+    const matchesDate = !dateFilter || bookingDate === dateFilter;
 
     return matchesSearch && matchesStatus && matchesDate;
   });
@@ -263,6 +251,7 @@ export default function AdminPage() {
     (booking) => booking.status === "completed"
   ).length;
 
+  // ใช้วันที่ตามเขตเวลาไทย (Asia/Bangkok) สำหรับสรุปรายได้
   function getBangkokDateKey(value: string | Date) {
     const parts = new Intl.DateTimeFormat("en-CA", {
       timeZone: "Asia/Bangkok",
@@ -271,38 +260,20 @@ export default function AdminPage() {
       day: "2-digit",
     }).formatToParts(new Date(value));
 
-    const year =
-      parts.find((part) => part.type === "year")?.value ?? "";
-    const month =
-      parts.find((part) => part.type === "month")?.value ?? "";
-    const day =
-      parts.find((part) => part.type === "day")?.value ?? "";
-
+    const year = parts.find((part) => part.type === "year")?.value ?? "";
+    const month = parts.find((part) => part.type === "month")?.value ?? "";
+    const day = parts.find((part) => part.type === "day")?.value ?? "";
     return `${year}-${month}-${day}`;
   }
 
   const todayKey = getBangkokDateKey(new Date());
-  const [todayYear, todayMonth, todayDay] =
-    todayKey.split("-").map(Number);
-
-  const todayUtc = new Date(
-    Date.UTC(todayYear, todayMonth - 1, todayDay)
-  );
-
-  const weekdayFromMonday =
-    (todayUtc.getUTCDay() + 6) % 7;
-
+  const [todayYear, todayMonth, todayDay] = todayKey.split("-").map(Number);
+  const todayUtc = new Date(Date.UTC(todayYear, todayMonth - 1, todayDay));
+  const weekdayFromMonday = (todayUtc.getUTCDay() + 6) % 7;
   const weekStartUtc = new Date(todayUtc);
-  weekStartUtc.setUTCDate(
-    todayUtc.getUTCDate() - weekdayFromMonday
-  );
-
-  const weekStartKey = weekStartUtc
-    .toISOString()
-    .slice(0, 10);
-
-  const monthStartKey =
-    `${todayYear}-${String(todayMonth).padStart(2, "0")}-01`;
+  weekStartUtc.setUTCDate(todayUtc.getUTCDate() - weekdayFromMonday);
+  const weekStartKey = weekStartUtc.toISOString().slice(0, 10);
+  const monthStartKey = `${todayYear}-${String(todayMonth).padStart(2, "0")}-01`;
 
   const reportStartKey =
     reportPeriod === "today"
@@ -311,26 +282,16 @@ export default function AdminPage() {
         ? weekStartKey
         : monthStartKey;
 
-  const completedBookingsInPeriod = bookings.filter(
-    (booking) => {
-      if (booking.status !== "completed") return false;
+  const completedBookingsInPeriod = bookings.filter((booking) => {
+    if (booking.status !== "completed") return false;
+    if (!booking.completed_at) return false;
+    const completedDate = getBangkokDateKey(booking.completed_at);
+    return completedDate >= reportStartKey && completedDate <= todayKey;
+  });
 
-      const bookingDate = getBangkokDateKey(
-        booking.start_at
-      );
-
-      return (
-        bookingDate >= reportStartKey &&
-        bookingDate <= todayKey
-      );
-    }
-  );
-
-  const reportRevenue = completedBookingsInPeriod.reduce(
-    (total, booking) =>
-      total + Number(booking.price_at_booking ?? 0),
-    0
-  );
+  const reportRevenue = completedBookingsInPeriod.reduce((total, booking) => {
+    return total + Number(booking.price_at_booking ?? 0);
+  }, 0);
 
   const reportPeriodLabels = {
     today: "วันนี้",
@@ -355,12 +316,11 @@ export default function AdminPage() {
   return (
     <main className="min-h-screen bg-slate-50 text-slate-900">
       <header className="border-b border-slate-200 bg-white">
-        <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4 px-5 py-4">
+        <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-5 py-4">
           <div className="flex items-center gap-3">
             <div className="rounded-xl bg-blue-600 p-2 text-white">
               <Scissors size={22} />
             </div>
-
             <div>
               <h1 className="text-xl font-bold">
                 QueueMate{" "}
@@ -372,8 +332,7 @@ export default function AdminPage() {
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            <button
+          <button
               type="button"
               onClick={() => router.push("/admin/services")}
               className="flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-700"
@@ -383,14 +342,12 @@ export default function AdminPage() {
             </button>
 
             <button
-              type="button"
-              onClick={handleLogout}
-              className="flex items-center gap-2 rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium transition hover:bg-slate-50"
-            >
-              <LogOut size={17} />
-              ออกจากระบบ
-            </button>
-          </div>
+            onClick={handleLogout}
+            className="flex items-center gap-2 rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium hover:bg-slate-50"
+          >
+            <LogOut size={17} />
+            ออกจากระบบ
+          </button>
         </div>
       </header>
 
@@ -399,11 +356,9 @@ export default function AdminPage() {
           <p className="text-sm font-semibold uppercase tracking-widest text-blue-600">
             Admin Dashboard
           </p>
-
           <h2 className="mt-2 text-3xl font-bold">
             จัดการรายการจอง
           </h2>
-
           <p className="mt-2 text-sm text-slate-500">
             เข้าสู่ระบบด้วย {email}
           </p>
@@ -434,7 +389,6 @@ export default function AdminPage() {
               <p className="text-sm text-slate-500">
                 {item.label}
               </p>
-
               <p
                 className={`mt-3 text-3xl font-bold ${item.color}`}
               >
@@ -447,25 +401,17 @@ export default function AdminPage() {
         <section className="mb-8 rounded-2xl border border-slate-200 bg-white p-5 sm:p-6">
           <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <h3 className="text-lg font-bold">
-                สรุปรายได้ของร้าน
-              </h3>
+              <h3 className="text-lg font-bold">สรุปรายได้ของร้าน</h3>
               <p className="mt-1 text-sm text-slate-500">
                 นับเฉพาะรายการจองที่มีสถานะเสร็จสิ้น
               </p>
             </div>
-
             <label className="flex items-center gap-3 text-sm font-medium text-slate-600">
               ช่วงเวลา
               <select
                 value={reportPeriod}
                 onChange={(event) =>
-                  setReportPeriod(
-                    event.target.value as
-                      | "today"
-                      | "week"
-                      | "month"
-                  )
+                  setReportPeriod(event.target.value as "today" | "week" | "month")
                 }
                 className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
               >
@@ -480,43 +426,30 @@ export default function AdminPage() {
             <div className="rounded-2xl bg-emerald-50 p-5">
               <div className="flex items-center justify-between">
                 <p className="text-sm font-medium text-emerald-800">
-                  รายได้ · {reportPeriodLabels[reportPeriod]}
+                  รายได้โดยประมาณ · {reportPeriodLabels[reportPeriod]}
                 </p>
-                <Banknote
-                  className="text-emerald-700"
-                  size={22}
-                />
+                <Banknote className="text-emerald-700" size={22} />
               </div>
-
               <p className="mt-3 text-3xl font-bold text-emerald-700">
                 {loading
                   ? "—"
                   : `${reportRevenue.toLocaleString("th-TH")} บาท`}
               </p>
-
               <p className="mt-2 text-xs text-emerald-800">
-                คำนวณจากราคาที่บันทึกไว้ ณ เวลาจอง
+                คำนวณจากราคาบริการปัจจุบันของคิวที่เสร็จสิ้น
               </p>
             </div>
 
             <div className="rounded-2xl bg-blue-50 p-5">
               <div className="flex items-center justify-between">
                 <p className="text-sm font-medium text-blue-800">
-                  จำนวนคิวที่เสร็จสิ้น ·{" "}
-                  {reportPeriodLabels[reportPeriod]}
+                  จำนวนคิวที่เสร็จสิ้น · {reportPeriodLabels[reportPeriod]}
                 </p>
-                <TrendingUp
-                  className="text-blue-700"
-                  size={22}
-                />
+                <TrendingUp className="text-blue-700" size={22} />
               </div>
-
               <p className="mt-3 text-3xl font-bold text-blue-700">
-                {loading
-                  ? "—"
-                  : `${completedBookingsInPeriod.length.toLocaleString("th-TH")} คิว`}
+                {loading ? "—" : completedBookingsInPeriod.length.toLocaleString("th-TH")} คิว
               </p>
-
               <p className="mt-2 text-xs text-blue-800">
                 นับตามวันที่เริ่มให้บริการในเขตเวลาไทย
               </p>
@@ -529,10 +462,7 @@ export default function AdminPage() {
             role="status"
             className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800"
           >
-            <CheckCircle2
-              className="mr-2 inline"
-              size={18}
-            />
+            <CheckCircle2 className="mr-2 inline" size={18} />
             {actionMessage}
           </div>
         )}
@@ -542,28 +472,22 @@ export default function AdminPage() {
             role="alert"
             className="mb-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800"
           >
-            <XCircle
-              className="mr-2 inline"
-              size={18}
-            />
+            <XCircle className="mr-2 inline" size={18} />
             {actionError}
           </div>
         )}
 
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
-          <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-5 py-4">
+          <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
             <div>
-              <h3 className="font-bold">
-                รายการจองทั้งหมด
-              </h3>
+              <h3 className="font-bold">รายการจองทั้งหมด</h3>
               <p className="mt-1 text-sm text-slate-500">
                 ตรวจสอบวัน เวลา และจัดการสถานะคิว
               </p>
             </div>
 
             <button
-              type="button"
-              onClick={() => void loadDashboard()}
+              onClick={loadDashboard}
               disabled={loading}
               className="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
             >
@@ -577,26 +501,16 @@ export default function AdminPage() {
 
           <div className="grid gap-3 border-b border-slate-200 bg-slate-50/70 p-5 md:grid-cols-4">
             <div className="md:col-span-2">
-              <label
-                htmlFor="booking-search"
-                className="mb-2 block text-sm font-medium text-slate-700"
-              >
+              <label htmlFor="booking-search" className="mb-2 block text-sm font-medium text-slate-700">
                 ค้นหาลูกค้า
               </label>
-
               <div className="relative">
-                <Search
-                  size={18}
-                  className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
-                />
-
+                <Search size={18} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                 <input
                   id="booking-search"
                   type="search"
                   value={searchTerm}
-                  onChange={(event) =>
-                    setSearchTerm(event.target.value)
-                  }
+                  onChange={(event) => setSearchTerm(event.target.value)}
                   placeholder="ชื่อหรือเบอร์โทรศัพท์"
                   className="w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-10 pr-3 text-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                 />
@@ -604,24 +518,14 @@ export default function AdminPage() {
             </div>
 
             <div>
-              <label
-                htmlFor="booking-status"
-                className="mb-2 flex items-center gap-2 text-sm font-medium text-slate-700"
-              >
+              <label htmlFor="booking-status" className="mb-2 flex items-center gap-2 text-sm font-medium text-slate-700">
                 <ListFilter size={16} />
                 สถานะ
               </label>
-
               <select
                 id="booking-status"
                 value={statusFilter}
-                onChange={(event) =>
-                  setStatusFilter(
-                    event.target.value as
-                      | "all"
-                      | BookingStatus
-                  )
-                }
+                onChange={(event) => setStatusFilter(event.target.value as "all" | BookingStatus)}
                 className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
               >
                 <option value="all">ทุกสถานะ</option>
@@ -633,33 +537,22 @@ export default function AdminPage() {
             </div>
 
             <div>
-              <label
-                htmlFor="booking-date"
-                className="mb-2 block text-sm font-medium text-slate-700"
-              >
+              <label htmlFor="booking-date" className="mb-2 block text-sm font-medium text-slate-700">
                 วันที่จอง
               </label>
-
               <input
                 id="booking-date"
                 type="date"
                 value={dateFilter}
-                onChange={(event) =>
-                  setDateFilter(event.target.value)
-                }
+                onChange={(event) => setDateFilter(event.target.value)}
                 className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
               />
             </div>
 
             <div className="flex flex-wrap items-center justify-between gap-3 md:col-span-4">
               <p className="text-sm text-slate-500">
-                แสดง{" "}
-                <span className="font-semibold text-slate-900">
-                  {filteredBookings.length}
-                </span>{" "}
-                จาก {bookings.length} รายการ
+                แสดง <span className="font-semibold text-slate-900">{filteredBookings.length}</span> จาก {bookings.length} รายการ
               </p>
-
               <button
                 type="button"
                 onClick={() => {
@@ -667,11 +560,7 @@ export default function AdminPage() {
                   setStatusFilter("all");
                   setDateFilter("");
                 }}
-                disabled={
-                  !searchTerm &&
-                  statusFilter === "all" &&
-                  !dateFilter
-                }
+                disabled={!searchTerm && statusFilter === "all" && !dateFilter}
                 className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 <RotateCcw size={15} />
@@ -700,13 +589,8 @@ export default function AdminPage() {
             </div>
           ) : filteredBookings.length === 0 ? (
             <div className="p-12 text-center">
-              <Search
-                size={36}
-                className="mx-auto mb-3 text-slate-300"
-              />
-              <p className="font-medium">
-                ไม่พบรายการจองที่ตรงกัน
-              </p>
+              <Search size={36} className="mx-auto mb-3 text-slate-300" />
+              <p className="font-medium">ไม่พบรายการจองที่ตรงกัน</p>
               <p className="mt-1 text-sm text-slate-500">
                 ลองเปลี่ยนคำค้นหา สถานะ หรือวันที่ที่เลือก
               </p>
@@ -716,27 +600,13 @@ export default function AdminPage() {
               <table className="w-full min-w-[1100px] text-left text-sm">
                 <thead className="bg-slate-50 text-slate-500">
                   <tr>
-                    <th className="px-5 py-4 font-medium">
-                      ลูกค้า
-                    </th>
-                    <th className="px-5 py-4 font-medium">
-                      บริการ
-                    </th>
-                    <th className="px-5 py-4 font-medium">
-                      ช่าง
-                    </th>
-                    <th className="px-5 py-4 font-medium">
-                      วันที่
-                    </th>
-                    <th className="px-5 py-4 font-medium">
-                      เวลา
-                    </th>
-                    <th className="px-5 py-4 font-medium">
-                      สถานะ
-                    </th>
-                    <th className="px-5 py-4 font-medium">
-                      จัดการคิว
-                    </th>
+                    <th className="px-5 py-4 font-medium">ลูกค้า</th>
+                    <th className="px-5 py-4 font-medium">บริการ</th>
+                    <th className="px-5 py-4 font-medium">ช่าง</th>
+                    <th className="px-5 py-4 font-medium">วันที่</th>
+                    <th className="px-5 py-4 font-medium">เวลา</th>
+                    <th className="px-5 py-4 font-medium">สถานะ</th>
+                    <th className="px-5 py-4 font-medium">จัดการคิว</th>
                   </tr>
                 </thead>
 
@@ -760,12 +630,13 @@ export default function AdminPage() {
                         </td>
 
                         <td className="px-5 py-4">
-                          {getServiceName(booking.service_id)}
-                          <p className="mt-1 text-xs text-slate-500">
-                            {Number(
-                              booking.price_at_booking ?? 0
-                            ).toLocaleString("th-TH")}{" "}
-                            บาท ณ เวลาจอง
+                          <p className="font-medium">
+                            {getServiceName(booking.service_id)}
+                          </p>
+                          <p className="mt-1 text-sm font-semibold text-emerald-700">
+                            {booking.price_at_booking === null
+                              ? "ไม่พบราคา"
+                              : `${Number(booking.price_at_booking).toLocaleString("th-TH")} บาท`}
                           </p>
                         </td>
 
@@ -797,10 +668,9 @@ export default function AdminPage() {
                           {booking.status === "pending" && (
                             <div className="flex flex-wrap gap-2">
                               <button
-                                type="button"
                                 disabled={isUpdating}
                                 onClick={() =>
-                                  void handleStatusChange(
+                                  handleStatusChange(
                                     booking.id,
                                     "confirmed"
                                   )
@@ -808,16 +678,13 @@ export default function AdminPage() {
                                 className="inline-flex items-center gap-1 rounded-lg bg-blue-600 px-3 py-2 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50"
                               >
                                 <Check size={14} />
-                                {isUpdating
-                                  ? "กำลังบันทึก..."
-                                  : "ยืนยันคิว"}
+                                {isUpdating ? "กำลังบันทึก..." : "ยืนยันคิว"}
                               </button>
 
                               <button
-                                type="button"
                                 disabled={isUpdating}
                                 onClick={() =>
-                                  void handleStatusChange(
+                                  handleStatusChange(
                                     booking.id,
                                     "cancelled"
                                   )
@@ -833,10 +700,9 @@ export default function AdminPage() {
                           {booking.status === "confirmed" && (
                             <div className="flex flex-wrap gap-2">
                               <button
-                                type="button"
                                 disabled={isUpdating}
                                 onClick={() =>
-                                  void handleStatusChange(
+                                  handleStatusChange(
                                     booking.id,
                                     "completed"
                                   )
@@ -844,16 +710,13 @@ export default function AdminPage() {
                                 className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
                               >
                                 <CheckCircle2 size={14} />
-                                {isUpdating
-                                  ? "กำลังบันทึก..."
-                                  : "เสร็จสิ้น"}
+                                {isUpdating ? "กำลังบันทึก..." : "เสร็จสิ้น"}
                               </button>
 
                               <button
-                                type="button"
                                 disabled={isUpdating}
                                 onClick={() =>
-                                  void handleStatusChange(
+                                  handleStatusChange(
                                     booking.id,
                                     "cancelled"
                                   )
@@ -883,10 +746,7 @@ export default function AdminPage() {
         </div>
 
         <div className="mt-5 flex items-start gap-3 rounded-xl border border-blue-100 bg-blue-50 p-4 text-sm text-blue-900">
-          <ShieldCheck
-            size={20}
-            className="mt-0.5 shrink-0"
-          />
+          <ShieldCheck size={20} className="mt-0.5 shrink-0" />
           <p>
             การเปลี่ยนสถานะจะตรวจสอบสิทธิ์ Admin ในฐานข้อมูล
             และอนุญาตเฉพาะลำดับสถานะที่กำหนดไว้
