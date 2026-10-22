@@ -20,6 +20,21 @@ import {
   TrendingUp,
   Settings,
 } from "lucide-react";
+import {
+  ResponsiveContainer,
+  LineChart,
+  Line,
+  CartesianGrid,
+  XAxis,
+  YAxis,
+  Tooltip,
+  BarChart,
+  Bar,
+  PieChart,
+  Pie,
+  Cell,
+  Legend,
+} from "recharts";
 import { supabase } from "@/lib/supabase";
 
 type BookingStatus =
@@ -293,6 +308,57 @@ export default function AdminPage() {
     return total + Number(booking.price_at_booking ?? 0);
   }, 0);
 
+  // เตรียมข้อมูลกราฟรายได้รายวันตามช่วงเวลาที่เลือก
+  const dailyRevenueMap = new Map<string, number>();
+  const dailyBookingMap = new Map<string, number>();
+  for (const booking of completedBookingsInPeriod) {
+    if (!booking.completed_at) continue;
+    const dateKey = getBangkokDateKey(booking.completed_at);
+    dailyRevenueMap.set(
+      dateKey,
+      (dailyRevenueMap.get(dateKey) ?? 0) + Number(booking.price_at_booking ?? 0)
+    );
+    dailyBookingMap.set(dateKey, (dailyBookingMap.get(dateKey) ?? 0) + 1);
+  }
+
+  const chartStartDate = new Date(`${reportStartKey}T00:00:00+07:00`);
+  const chartEndDate = new Date(`${todayKey}T00:00:00+07:00`);
+  const revenueChartData: { date: string; revenue: number; bookings: number }[] = [];
+  for (
+    let cursor = new Date(chartStartDate);
+    cursor <= chartEndDate;
+    cursor.setUTCDate(cursor.getUTCDate() + 1)
+  ) {
+    const dateKey = getBangkokDateKey(cursor);
+    revenueChartData.push({
+      date: dateKey.slice(5),
+      revenue: dailyRevenueMap.get(dateKey) ?? 0,
+      bookings: dailyBookingMap.get(dateKey) ?? 0,
+    });
+  }
+
+  const bookingStatusChartData = [
+    { name: "รอยืนยัน", value: pendingCount, color: "#f59e0b" },
+    { name: "ยืนยันแล้ว", value: confirmedCount, color: "#3b82f6" },
+    { name: "เสร็จสิ้น", value: completedCount, color: "#10b981" },
+    {
+      name: "ยกเลิก",
+      value: bookings.filter((booking) => booking.status === "cancelled").length,
+      color: "#ef4444",
+    },
+  ];
+
+  const popularServicesMap = new Map<string, number>();
+  for (const booking of bookings) {
+    if (booking.status === "cancelled") continue;
+    const serviceName = getServiceName(booking.service_id);
+    popularServicesMap.set(serviceName, (popularServicesMap.get(serviceName) ?? 0) + 1);
+  }
+  const popularServicesChartData = Array.from(popularServicesMap.entries())
+    .map(([name, bookingsCount]) => ({ name, bookings: bookingsCount }))
+    .sort((a, b) => b.bookings - a.bookings)
+    .slice(0, 5);
+
   const reportPeriodLabels = {
     today: "วันนี้",
     week: "สัปดาห์นี้",
@@ -454,6 +520,83 @@ export default function AdminPage() {
                 นับตามวันที่เริ่มให้บริการในเขตเวลาไทย
               </p>
             </div>
+          </div>
+        </section>
+
+        <section className="mb-8 grid gap-6 lg:grid-cols-2">
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 sm:p-6 lg:col-span-2">
+            <div className="mb-5">
+              <h3 className="text-lg font-bold">กราฟรายได้รายวัน</h3>
+              <p className="mt-1 text-sm text-slate-500">
+                แสดงรายได้จากคิวที่เสร็จสิ้น · {reportPeriodLabels[reportPeriod]}
+              </p>
+            </div>
+            {loading ? (
+              <div className="flex h-72 items-center justify-center text-sm text-slate-400">กำลังโหลดกราฟ...</div>
+            ) : revenueChartData.length === 0 ? (
+              <div className="flex h-72 items-center justify-center text-sm text-slate-400">ยังไม่มีข้อมูลรายได้ในช่วงเวลานี้</div>
+            ) : (
+              <div className="h-72 w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={revenueChartData} margin={{ top: 10, right: 16, left: 4, bottom: 4 }}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="date" tick={{ fontSize: 12 }} />
+                    <YAxis tick={{ fontSize: 12 }} />
+                    <Tooltip
+                      formatter={(value) => [`${Number(value ?? 0).toLocaleString("th-TH")} บาท`, "รายได้"]}
+                      labelFormatter={(label) => `วันที่ ${label}`}
+                    />
+                    <Line type="monotone" dataKey="revenue" name="รายได้" stroke="#059669" strokeWidth={3} dot={{ r: 3 }} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+          </div>
+
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 sm:p-6">
+            <h3 className="text-lg font-bold">สัดส่วนสถานะการจอง</h3>
+            <p className="mt-1 text-sm text-slate-500">รายการจองทั้งหมดที่โหลดจากระบบ</p>
+            {loading ? (
+              <div className="flex h-64 items-center justify-center text-sm text-slate-400">กำลังโหลดกราฟ...</div>
+            ) : bookings.length === 0 ? (
+              <div className="flex h-64 items-center justify-center text-sm text-slate-400">ยังไม่มีข้อมูลการจอง</div>
+            ) : (
+              <div className="h-64 w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie data={bookingStatusChartData} dataKey="value" nameKey="name" cx="50%" cy="48%" outerRadius={82} label>
+                      {bookingStatusChartData.map((entry) => (
+                        <Cell key={entry.name} fill={entry.color} />
+                      ))}
+                    </Pie>
+                    <Tooltip formatter={(value) => [`${Number(value ?? 0)} คิว`, "จำนวน"]} />
+                    <Legend />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+          </div>
+
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 sm:p-6">
+            <h3 className="text-lg font-bold">บริการยอดนิยม</h3>
+            <p className="mt-1 text-sm text-slate-500">จัดอันดับตามจำนวนคิว ไม่รวมรายการที่ยกเลิก (สูงสุด 5 บริการ)</p>
+            {loading ? (
+              <div className="flex h-64 items-center justify-center text-sm text-slate-400">กำลังโหลดกราฟ...</div>
+            ) : popularServicesChartData.length === 0 ? (
+              <div className="flex h-64 items-center justify-center text-sm text-slate-400">ยังไม่มีข้อมูลบริการ</div>
+            ) : (
+              <div className="h-64 w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={popularServicesChartData} margin={{ top: 10, right: 8, left: 0, bottom: 4 }}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="name" tick={{ fontSize: 11 }} interval={0} />
+                    <YAxis allowDecimals={false} tick={{ fontSize: 12 }} />
+                    <Tooltip formatter={(value) => [`${Number(value ?? 0)} คิว`, "จำนวนจอง"]} />
+                    <Bar dataKey="bookings" name="จำนวนจอง" fill="#3b82f6" radius={[6, 6, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
           </div>
         </section>
 

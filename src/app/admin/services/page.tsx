@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Plus, Pencil, Power, Scissors, Save, X } from "lucide-react";
 import { supabase } from "@/lib/supabase";
@@ -32,7 +32,7 @@ export default function AdminServicesPage() {
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
 
-  async function loadServices() {
+  const loadServices = useCallback(async () => {
     setLoading(true);
     setError("");
     const { data: authData, error: authError } = await supabase.auth.getUser();
@@ -50,11 +50,15 @@ export default function AdminServicesPage() {
       setServices((data ?? []) as Service[]);
     }
     setLoading(false);
-  }
+  }, [router]);
 
   useEffect(() => {
-    void loadServices();
-  }, []);
+    const timer = window.setTimeout(() => {
+      void loadServices();
+    }, 0);
+
+    return () => window.clearTimeout(timer);
+  }, [loadServices]);
 
   function startEdit(service: Service) {
     setEditingId(service.id);
